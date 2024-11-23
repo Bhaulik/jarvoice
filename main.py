@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-
+from contextlib import asynccontextmanager
+from voice_tool_functions import test_function
+    
 app = FastAPI(
     title="Jarvoice API",
     description="Personal AI Assistant API that can manage tasks through phone calls & texts",
@@ -19,6 +21,7 @@ app.add_middleware(
 # Root endpoint
 @app.get("/")
 async def root():
+    test_function()
     return {
         "message": "Welcome to Jarvoice API",
         "status": "active"
