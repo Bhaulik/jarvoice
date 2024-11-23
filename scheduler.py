@@ -15,6 +15,8 @@ import pytz
 from dotenv import load_dotenv
 import asyncio
 import traceback
+from twilio_sms import send_sms
+
 
 # Load environment variables from .env.local
 load_dotenv('.env.local')
@@ -496,6 +498,26 @@ class SupabaseJobScheduler:
         )
 
         return ScheduledJob(**job_dict)
+
+    def _get_function_for_job_type(self, job_type: str):
+        """
+        Returns the appropriate function for the given job type
+        
+        Args:
+            job_type (str): The type of job to execute
+            
+        Returns:
+            callable: The function to execute for this job type
+        """
+        job_type_mapping = {
+            'sms': send_sms,
+            # Add other job types here
+        }
+        
+        if job_type not in job_type_mapping:
+            raise ValueError(f"Unknown job type: {job_type}")
+        
+        return job_type_mapping[job_type]
 
 # Create the Supabase table (run this SQL in Supabase SQL editor):
 """
