@@ -12,3 +12,5 @@ typing-extensions
 rich
 vapi_python
 pytz
+email-validator
+twilio
