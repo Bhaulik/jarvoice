@@ -135,6 +135,35 @@ async def get_events(
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/events/{id}", response_model=Event)
+async def get_event(
+    id: UUID4,
+    supabase: Client = Depends(get_supabase)
+) -> Event:
+    try:
+        response = supabase.table("events").select("*").eq("id", str(id)).execute()
+        
+        if not response.data or len(response.data) == 0:
+            raise HTTPException(status_code=404, detail="Event not found")
+
+        event_data = response.data[0]
+        return Event(
+            id=UUID4(event_data['id']),
+            title=event_data['title'],
+            description=event_data['description'],
+            start_time=datetime.fromisoformat(event_data['start_time']),
+            end_time=datetime.fromisoformat(event_data['end_time']),
+            attendees=event_data.get('attendees', []),
+            status=event_data.get('status') or 'SCHEDULED',  # Default to 'SCHEDULED' if None
+            created_at=datetime.fromisoformat(event_data['created_at']),
+            updated_at=datetime.fromisoformat(event_data['updated_at'])
+        )
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 if __name__ == "__main__":
     import uvicorn
