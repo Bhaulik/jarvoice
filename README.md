@@ -1,7 +1,7 @@
 
 # Jarvoice API
 
-A FastAPI-based personal AI assistant that manages tasks through phone calls & texts.
+Your smart voice-powered butler for research, scheduling & smart updates via calls & messages.
 
 ## 🌟 Features
 
