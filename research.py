@@ -1,8 +1,14 @@
-from typing import Annotated, Any, Dict, List, TypedDict
+import os
+from typing import Annotated, Any, Dict, List, TypedDict, Optional
+import uuid
 from langgraph.graph import Graph, StateGraph
 from langchain_anthropic import ChatAnthropic
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import AIMessage, HumanMessage
+from datetime import datetime
+from pydantic import BaseModel
+from fastapi import HTTPException, Query
+from supabase import Client
 
 # Define the state structure
 class ResearchState(TypedDict):
@@ -17,6 +23,17 @@ class ResearchState(TypedDict):
     iteration_count: int
     steps_taken: int  # Add step counter
 
+class ResearchResult(BaseModel):
+    id: str
+    question: str
+    answer: str
+    created_at: Optional[datetime] = None
+
+class ResearchResponse(BaseModel):
+    data: List[ResearchResult]
+    count: int
+    page: int
+    page_size: int
 
 # Initialize Claude
 model = ChatAnthropic(
@@ -85,7 +102,7 @@ def conduct_research(state: ResearchState) -> ResearchState:
             "findings": findings,
             "research_plan": remaining_tasks,
             "current_task": remaining_tasks[0] if remaining_tasks else "",
-            "should_continue": bool(remaining_tasks) and steps_taken < 5,
+            "should_continue": bool(remaining_tasks) and steps_taken < 2,
             "steps_taken": steps_taken,
             "messages": state["messages"] + [HumanMessage(content=state["current_task"]), AIMessage(content=response.content)],
             "error": None  # Clear any previous errors
@@ -134,10 +151,53 @@ def should_continue(state: ResearchState) -> str:
     # Add error check
     if state.get("error"):
         return "synthesize"
-    if state["should_continue"] and state["steps_taken"] < 5:
+    if state["should_continue"] and state["steps_taken"] < 2:
         return "continue_research"
     return "synthesize"
 
+async def fetch_research_results(
+    supabase: Client,
+    page: int = 1,
+    page_size: int = 10,
+    search: Optional[str] = None
+) -> ResearchResponse:
+    try:
+        query = supabase.table("research_results").select("*", count="exact")
+
+        # Apply search filter if provided
+        if search:
+            query = query.or_(f"question.ilike.%{search}%,answer.ilike.%{search}%")
+
+        # Calculate pagination
+        offset = (page - 1) * page_size
+        response = query.range(offset, offset + page_size - 1).execute()
+
+        if not response.data:
+            return ResearchResponse(
+                data=[],
+                count=0,
+                page=page,
+                page_size=page_size
+            )
+
+        # Transform the data
+        results = []
+        for result_data in response.data:
+            # Convert created_at if it exists
+            if 'created_at' in result_data and result_data['created_at']:
+                result_data['created_at'] = datetime.fromisoformat(result_data['created_at'])
+            results.append(ResearchResult(**result_data))
+
+        return ResearchResponse(
+            data=results,
+            count=response.count,
+            page=page,
+            page_size=page_size
+        )
+
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Create the workflow graph
 workflow = StateGraph(ResearchState)
@@ -179,4 +239,5 @@ def run_research(question: str) -> Dict:
     }
     print(initial_state)
     result = graph.invoke(initial_state, config={"recursion_limit": 15})
+
     return result

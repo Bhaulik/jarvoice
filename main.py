@@ -13,7 +13,7 @@ import os
 from langchain_core.messages import AIMessage
 
 from fastapi.middleware.cors import CORSMiddleware
-from research import run_research
+from research import run_research, fetch_research_results, ResearchResponse
 from tool_functions import * 
 import json
 from fastapi import FastAPI, Request, HTTPException
@@ -109,7 +109,7 @@ load_dotenv(dotenv_path=env_path.resolve())
 # Supabase client initialization
 def get_supabase() -> Client:
     url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
+    key = os.environ.get("SUPABASE_ANON_KEY")
     if not url or not key:
         raise HTTPException(status_code=500, detail="Supabase credentials not configured")
     return create_client(url, key)
@@ -451,6 +451,15 @@ async def schedule_test_call(delay_seconds: int = 20):
         logger.error(f"Failed to schedule test call: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/research-results", response_model=ResearchResponse)
+async def get_research_results(
+    supabase: Client = Depends(get_supabase),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    search: Optional[str] = None
+):
+    return await fetch_research_results(supabase, page, page_size, search)
 
 if __name__ == "__main__":
     api_token = os.getenv("VAPI_TOKEN")
