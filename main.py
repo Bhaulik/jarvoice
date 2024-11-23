@@ -1,6 +1,6 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import UUID4, BaseModel
 from supabase import create_client, Client
@@ -8,9 +8,11 @@ from fastapi import FastAPI, HTTPException, Query, Depends
 from pathlib import Path
 from dotenv import load_dotenv
 from uuid import UUID
+from enum import Enum
 
 import os
 from fastapi.middleware.cors import CORSMiddleware
+from cal import CalService
 
 app = FastAPI(
     title="Jarvoice API",
@@ -37,15 +39,32 @@ async def root():
 
 # Pydantic models
 class Event(BaseModel):
-    id: UUID4
-    title: str
+    id: Optional[UUID4] = None
+    title: Optional[str] = None
     description: Optional[str] = None
-    start_time: datetime
-    end_time: datetime
-    attendees: List[str]
-    status: str
-    created_at: datetime
-    updated_at: datetime
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    attendees: Optional[List[str]] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
+    calcom_event_id: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    
+    # Cal.com specific fields
+    duration: Optional[int] = None  # lengthInMinutes
+    slug: Optional[str] = None
+    locations: Optional[List[Dict[str, Any]]] = None
+    booking_fields: Optional[List[Dict[str, Any]]] = None
+    disable_guests: Optional[bool] = None
+    min_booking_notice: Optional[int] = None
+    before_buffer: Optional[int] = None
+    after_buffer: Optional[int] = None
+    seats: Optional[Dict[str, Any]] = None
+    hosts: Optional[List[Dict[str, Any]]] = None
+    scheduling_type: Optional[Dict[str, Any]] = None
+    custom_name: Optional[str] = None
+    org_id: Optional[str] = None
+    team_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -67,6 +86,10 @@ def get_supabase() -> Client:
     if not url or not key:
         raise HTTPException(status_code=500, detail="Supabase credentials not configured")
     return create_client(url, key)
+
+# Add CalService dependency
+def get_cal_service():
+    return CalService()
 
 @app.get("/events", response_model=EventResponse)
 async def get_events(
@@ -164,6 +187,64 @@ async def get_event(
         print(e)
         raise HTTPException(status_code=500, detail=str(e))
     
+# Update your event creation endpoint to sync with Cal.com
+@app.post("/eventss", response_model=Event)
+async def create_event(
+    event: Event,
+    background_tasks: BackgroundTasks,
+    supabase: Client = Depends(get_supabase),
+    cal_service: CalService = Depends(get_cal_service)
+):
+    try:
+        # Convert Pydantic model to dict and format datetime fields
+        event_dict = event.model_dump()
+        event_dict['id'] = str(event_dict['id'])
+        event_dict['start_time'] = event_dict['start_time'].isoformat()
+        event_dict['end_time'] = event_dict['end_time'].isoformat()
+        event_dict['created_at'] = event_dict['created_at'].isoformat()
+        event_dict['updated_at'] = event_dict['updated_at'].isoformat()
+        event_dict['calcom_event_id'] = 'pending'
+        # Ensure status is uppercase
+        event_dict['status'] = event_dict['status'].upper()
+        
+        # Save to Supabase
+        response = supabase.table("events").insert(event_dict).execute()
+        
+        # Sync to Cal.com in the background
+        background_tasks.add_task(cal_service.sync_event_to_cal, event_dict)
+        
+        return Event(**response.data[0])
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add an endpoint to sync events from Cal.com
+@app.post("/events/sync-from-cal")
+async def sync_from_cal(
+    supabase: Client = Depends(get_supabase),
+    cal_service: CalService = Depends(get_cal_service)
+):
+    try:
+        # Fetch events from Cal.com
+        cal_events = await cal_service.get_cal_events()
+        
+        # Convert and save to Supabase
+        for cal_event in cal_events:
+            event_data = {
+                "title": cal_event["title"],
+                "description": cal_event.get("description"),
+                "start_time": cal_event["startTime"],
+                "end_time": cal_event["endTime"],
+                "attendees": [attendee["email"] for attendee in cal_event.get("attendees", [])],
+                "status": "SCHEDULED"
+            }
+            
+            supabase.table("events").insert(event_data).execute()
+            
+        return {"message": "Events synced successfully", "count": len(cal_events)}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
