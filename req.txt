@@ -4,3 +4,11 @@ supabase
 pydantic
 pydantic-settings
 python-dotenv
+langgraph
+langchain-anthropic
+langchain
+langchain-core
+typing-extensions
+rich
+vapi_python
+pytz
