@@ -39,20 +39,20 @@ load_dotenv('.env.local')
 
 @asynccontextmanager
 async def lifespan(app):
-    question = "What are the potential applications of CRISPR gene editing in medicine?"
-    result = run_research(question)
+    # question = "What are the potential applications of CRISPR gene editing in medicine?"
+    # result = run_research(question)
     
-    # Print the final answer
-    print("\n=== Final Answer ===")
-    print(result["final_answer"])
+    # # Print the final answer
+    # print("\n=== Final Answer ===")
+    # print(result["final_answer"])
     
-    # Print the detailed research process
-    print("\n=== Research Process ===")
-    for msg in result["messages"]:
-        role = "AI" if isinstance(msg, AIMessage) else "Human"
-        print(f"\n{role}: {msg.content}\n")
-        if role == "AI":
-            print("-" * 80)  # Separator line
+    # # Print the detailed research process
+    # print("\n=== Research Process ===")
+    # for msg in result["messages"]:
+    #     role = "AI" if isinstance(msg, AIMessage) else "Human"
+    #     print(f"\n{role}: {msg.content}\n")
+    #     if role == "AI":
+    #         print("-" * 80)  # Separator line
     yield
 
 app = FastAPI(
