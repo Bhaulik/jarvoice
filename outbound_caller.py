@@ -1,4 +1,3 @@
-from vapi import Vapi
 import os
 from loguru import logger
 from dotenv import load_dotenv

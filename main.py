@@ -10,12 +10,14 @@ from dotenv import load_dotenv
 from uuid import UUID
 
 import os
+from langchain_core.messages import AIMessage
+
 from fastapi.middleware.cors import CORSMiddleware
+from research import run_research
 from tool_functions import * 
 import json
 from fastapi import FastAPI, Request, HTTPException
 from rich.table import Table
-from rich.console import Console
 from rich.panel import Panel
 from rich import box
 from tool_registry import ToolFunctionRegistry, console
@@ -25,19 +27,39 @@ import sys
 import requests
 from tool_registry import ArgumentType
 import os
-from vapi import Vapi
 from typing import List, Dict, Any, Callable, TypeVar, Optional, Union, Type
 from scheduler import schedule_event_reminder, cancel_event_reminder, shutdown_scheduler, SupabaseJobScheduler, TriggerType
 import asyncio
 import pytz
 from outbound_caller import OutboundCaller
+from contextlib import asynccontextmanager
+
 # Load environment variables from .env.local
 load_dotenv('.env.local')
+
+@asynccontextmanager
+async def lifespan(app):
+    question = "What are the potential applications of CRISPR gene editing in medicine?"
+    result = run_research(question)
+    
+    # Print the final answer
+    print("\n=== Final Answer ===")
+    print(result["final_answer"])
+    
+    # Print the detailed research process
+    print("\n=== Research Process ===")
+    for msg in result["messages"]:
+        role = "AI" if isinstance(msg, AIMessage) else "Human"
+        print(f"\n{role}: {msg.content}\n")
+        if role == "AI":
+            print("-" * 80)  # Separator line
+    yield
 
 app = FastAPI(
     title="Jarvoice API",
     description="Personal AI Assistant API that can manage tasks through phone calls & texts",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 scheduler = SupabaseJobScheduler()
 caller = OutboundCaller()
@@ -433,13 +455,13 @@ async def schedule_test_call(delay_seconds: int = 20):
 if __name__ == "__main__":
     api_token = os.getenv("VAPI_TOKEN")
     if not api_token:
-        logger.error("VAPI_TOKEN environment variable not set")
+        print("VAPI_TOKEN environment variable not set")
         sys.exit(1)
     
     supabase_url = os.getenv("SUPABASE_URL")
     supabase_key = os.getenv("SUPABASE_ANON_KEY")
     if not supabase_url or not supabase_key:
-        logger.error("SUPABASE_URL or SUPABASE_ANON_KEY environment variable not set")
+        print("SUPABASE_URL or SUPABASE_ANON_KEY environment variable not set")
         sys.exit(1)
     
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
