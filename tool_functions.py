@@ -13,6 +13,7 @@ import json
 from datetime import datetime, timedelta
 from supabase import create_client
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from twilio_sms import send_sms 
 
 # Add at the very top of the file
 load_dotenv()  # Load environment variables from .env file
@@ -418,3 +419,96 @@ def get_tasks(customer_number: str, status: str = None) -> str:
     except Exception as e:
         logger.error(f"Failed to get tasks: {e}")
         return f"Failed to get tasks: {str(e)}"
+
+@ToolFunctionRegistry.register(
+    name="createEvent",
+    description="Create a new calendar event",
+    arguments={
+        "title": {
+            "type": "string",
+            "description": "Title of the event",
+            "required": True
+        },
+        "start_time": {
+            "type": "string",
+            "description": "Start time in ISO format (YYYY-MM-DDTHH:MM:SS)",
+            "required": True
+        },
+        "end_time": {
+            "type": "string",
+            "description": "End time in ISO format (YYYY-MM-DDTHH:MM:SS)",
+            "required": True
+        },
+        "location": {
+            "type": "string",
+            "description": "Event location",
+            "required": False
+        },
+        "reminder_minutes": {
+            "type": "number",
+            "description": "Minutes before event to send reminder (default: 30)",
+            "required": False
+        },
+        "customer_number": {
+            "type": "string",
+            "description": "Customer's phone number in E.164 format",
+            "required": True,
+            "pattern": "^\+[1-9]\d{1,14}$"
+        }
+    }
+)
+def create_event(
+    title: str,
+    start_time: str,
+    end_time: str,
+    customer_number: str,
+    location: str = None,
+    reminder_minutes: int = 30
+) -> str:
+    """Create a new calendar event"""
+    try:
+        start_datetime = datetime.fromisoformat(start_time)
+        reminder_time = start_datetime - timedelta(minutes=reminder_minutes)
+        
+        event_data = {
+            "title": title,
+            "start_time": start_time,
+            "end_time": end_time,
+            "location": location,
+            "user_id": customer_number,
+            "status": "SCHEDULED",
+            "reminder_time": reminder_time.isoformat(),
+            "reminder_sent": False
+        }
+        
+        response = supabase.table("events").insert(event_data).execute()
+        event = response.data[0]
+        
+        # Schedule reminder
+        scheduler.schedule_one_time_job(
+            func=send_event_reminder,
+            run_at=reminder_time,
+            job_id=f"event_reminder_{event['id']}",
+            event_id=event['id']
+        )
+        
+        return f"📅 Event created: {title}\n⏰ Start: {start_time}\n⌛ End: {end_time}\n📍 Location: {location or 'Not specified'}\n🔔 Reminder: {reminder_minutes} minutes before"
+    except Exception as e:
+        logger.error(f"Failed to create event: {e}")
+        return f"Failed to create event: {str(e)}"
+
+async def send_event_reminder(event_id: str) -> None:
+    """Send reminder for an upcoming event"""
+    try:
+        event = supabase.table("events").select("*").eq("id", event_id).single().execute().data
+        if event:
+            message = f"🔔 Reminder: {event['title']} starts at {event['start_time']}"
+            if event['location']:
+                message += f"\n📍 Location: {event['location']}"
+            
+            send_sms(to_number=event['user_id'], message=message)
+            
+            # Update reminder status
+            supabase.table("events").update({"reminder_sent": True}).eq("id", event_id).execute()
+    except Exception as e:
+        logger.error(f"Failed to send event reminder: {e}")
