@@ -31,6 +31,7 @@ from scheduler import schedule_event_reminder, cancel_event_reminder, shutdown_s
 import asyncio
 import pytz
 from outbound_caller import OutboundCaller
+from twilio_sms import send_sms
 # Load environment variables from .env.local
 load_dotenv('.env.local')
 
@@ -139,14 +140,30 @@ async def create_task(
                 
                 if user_response.data:
                     user_phone = user_response.data['phone_number']
+                    reminder_message = f"Reminder: Your task '{created_task.title}' is due at {created_task.due_date.strftime('%I:%M %p')}"
                     
-                    # Schedule the reminder
+                    # Schedule both call and SMS reminders
                     scheduler.schedule_one_time_job(
                         func=caller.make_simple_call,
                         run_at=task.reminder_time,
-                        job_id=f"task_reminder_{created_task.id}",
+                        job_id=f"task_reminder_call_{created_task.id}",
                         to_number=user_phone,
-                        message=f"Reminder: Your task '{created_task.title}' is due at {created_task.due_date.strftime('%I:%M %p')}",
+                        message=reminder_message,
+                        metadata={
+                            "task_id": str(created_task.id),
+                            "user_id": str(task.user_id),
+                            "reminder_type": "CALL"
+                        }
+                    )
+                    
+                    # Schedule SMS reminder (5 minutes after the call)
+                    sms_reminder_time = task.reminder_time + timedelta(minutes=0)
+                    scheduler.schedule_one_time_job(
+                        func=send_sms,
+                        run_at=sms_reminder_time,
+                        job_id=f"task_reminder_sms_{created_task.id}",
+                        to_number=user_phone,
+                        message=reminder_message,
                         metadata={
                             "task_id": str(created_task.id),
                             "user_id": str(task.user_id),
@@ -154,7 +171,7 @@ async def create_task(
                         }
                     )
             except Exception as e:
-                logger.error(f"Failed to schedule reminder: {e}")
+                logger.error(f"Failed to schedule reminders: {e}")
                 # Don't fail the task creation if reminder scheduling fails
                 
         return created_task
@@ -195,26 +212,43 @@ async def update_task(
     supabase: Client = Depends(get_supabase)
 ):
     try:
-        # If reminder time is updated, reschedule the reminder
+        # If reminder time is updated, reschedule the reminders
         if task_update.reminder_time:
-            # Cancel existing reminder job if any
-            scheduler.cancel_job(f"task_reminder_{task_id}")
+            # Cancel existing reminder jobs if any
+            scheduler.cancel_job(f"task_reminder_call_{task_id}")
+            scheduler.cancel_job(f"task_reminder_sms_{task_id}")
             
-            # Get user info for new reminder
+            # Get user info for new reminders
             task_response = supabase.table("tasks").select("user_id").eq("id", str(task_id)).execute()
             if task_response.data:
                 user_id = task_response.data[0]['user_id']
                 user_response = supabase.table("users").select("phone_number").eq("id", user_id).execute()
                 if user_response.data:
                     user_phone = user_response.data[0]['phone_number']
+                    reminder_message = f"Reminder: Your task '{task_update.title}' is due soon"
                     
-                    # Schedule new reminder
+                    # Schedule new call reminder
                     scheduler.schedule_one_time_job(
                         func=caller.make_simple_call,
                         run_at=task_update.reminder_time,
-                        job_id=f"task_reminder_{task_id}",
+                        job_id=f"task_reminder_call_{task_id}",
                         to_number=user_phone,
-                        message=f"Reminder: Your task '{task_update.title}' is due soon",
+                        message=reminder_message,
+                        metadata={
+                            "task_id": str(task_id),
+                            "user_id": user_id,
+                            "reminder_type": "CALL"
+                        }
+                    )
+                    
+                    # Schedule new SMS reminder
+                    sms_reminder_time = task_update.reminder_time + timedelta(minutes=5)
+                    scheduler.schedule_one_time_job(
+                        func=send_sms,
+                        run_at=sms_reminder_time,
+                        job_id=f"task_reminder_sms_{task_id}",
+                        to_number=user_phone,
+                        message=reminder_message,
                         metadata={
                             "task_id": str(task_id),
                             "user_id": user_id,
