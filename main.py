@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends
 from pathlib import Path
 from dotenv import load_dotenv
 from uuid import UUID
-from base_models import Task, Reminder, ReminderCreate, TaskBase, TaskCreate, User, UserCreate
+from base_models import Task, Reminder, ReminderCreate, TaskBase, TaskCreate, User, UserCreate, ContactBase, ContactCreate, Contact
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from tool_functions import * 
@@ -510,6 +510,102 @@ async def schedule_test_call(delay_seconds: int = 20):
     except Exception as e:
         logger.error(f"Failed to schedule test call: {e}")
         logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/contacts", response_model=Contact)
+async def create_contact(
+    contact: ContactCreate,
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        contact_dict = {
+            **contact.model_dump(),
+            "created_at": datetime.now(pytz.UTC).isoformat(),
+            "updated_at": datetime.now(pytz.UTC).isoformat(),
+        }
+        
+        # Convert UUID to string
+        contact_dict['user_id'] = str(contact_dict['user_id'])
+        
+        response = supabase.table("contacts").insert(contact_dict).execute()
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Failed to create contact")
+        return Contact(**response.data[0])
+    except Exception as e:
+        logger.error(f"Failed to create contact: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/contacts", response_model=List[Contact])
+async def get_contacts(
+    user_id: UUID4 = Query(...),
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        response = supabase.table("contacts")\
+            .select("*")\
+            .eq("user_id", str(user_id))\
+            .execute()
+        return [Contact(**contact_data) for contact_data in response.data]
+    except Exception as e:
+        logger.error(f"Failed to fetch contacts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/contacts/{contact_id}", response_model=Contact)
+async def get_contact(
+    contact_id: UUID4,
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        response = supabase.table("contacts")\
+            .select("*")\
+            .eq("id", str(contact_id))\
+            .execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return Contact(**response.data[0])
+    except Exception as e:
+        logger.error(f"Failed to get contact: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/contacts/{contact_id}", response_model=Contact)
+async def update_contact(
+    contact_id: UUID4,
+    contact_update: ContactBase,
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        update_data = {
+            **contact_update.model_dump(exclude_unset=True),
+            "updated_at": datetime.now(pytz.UTC).isoformat()
+        }
+        
+        response = supabase.table("contacts")\
+            .update(update_data)\
+            .eq("id", str(contact_id))\
+            .execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return Contact(**response.data[0])
+    except Exception as e:
+        logger.error(f"Failed to update contact: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/contacts/{contact_id}")
+async def delete_contact(
+    contact_id: UUID4,
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        response = supabase.table("contacts")\
+            .delete()\
+            .eq("id", str(contact_id))\
+            .execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Contact not found")
+        return {"message": "Contact deleted successfully"}
+    except Exception as e:
+        logger.error(f"Failed to delete contact: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
