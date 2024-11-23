@@ -30,6 +30,9 @@ from typing import List, Dict, Any, Callable, TypeVar, Optional, Union, Type
 from scheduler import schedule_event_reminder, cancel_event_reminder, shutdown_scheduler, SupabaseJobScheduler, TriggerType
 import asyncio
 import pytz
+from outbound_caller import OutboundCaller
+# Load environment variables from .env.local
+load_dotenv('.env.local')
 
 app = FastAPI(
     title="Jarvoice API",
@@ -37,6 +40,7 @@ app = FastAPI(
     version="1.0.0"
 )
 scheduler = SupabaseJobScheduler()
+caller = OutboundCaller()
 
 # Configure CORS
 app.add_middleware(
@@ -377,6 +381,55 @@ async def get_job_status(job_id: str):
         "metadata": job.metadata
     }
 
+@app.post("/test/call")
+async def test_call():
+    try:
+        result = caller.make_simple_call(
+            "+12045906645", 
+            "Hello! This is a test message."
+        )
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Test call failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/test/schedule-call/{delay_seconds}")
+async def schedule_test_call(delay_seconds: int = 20):
+    try:
+        # Schedule for specified seconds from now
+        run_time = datetime.now(pytz.UTC) + timedelta(seconds=delay_seconds)
+        
+        # Separate metadata from function arguments
+        metadata = {
+            "scheduled_for": run_time.isoformat(),
+            "job_type": "test_call"
+        }
+        
+        # Function-specific arguments
+        call_args = {
+            "to_number": "+12045906645",  # Hardcoded test number
+            "message": "Hello! This is a scheduled test call from your AI assistant."
+        }
+        
+        job = scheduler.schedule_one_time_job(
+            func=caller.make_simple_call,
+            run_at=run_time,
+            job_id=f"test_call_{datetime.now().timestamp()}",
+            **call_args,  # Function arguments
+            metadata=metadata  # Separate metadata
+        )
+        
+        return {
+            "message": "Test call scheduled successfully",
+            "scheduled_time": run_time.isoformat(),
+            "job_id": job.job_id,
+            "delay_seconds": delay_seconds
+        }
+    except Exception as e:
+        logger.error(f"Failed to schedule test call: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     api_token = os.getenv("VAPI_TOKEN")
     if not api_token:
@@ -388,4 +441,5 @@ if __name__ == "__main__":
     if not supabase_url or not supabase_key:
         logger.error("SUPABASE_URL or SUPABASE_ANON_KEY environment variable not set")
         sys.exit(1)
+    
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
