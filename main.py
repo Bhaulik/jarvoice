@@ -1,5 +1,11 @@
-def main():
-    print("Hello, World!")
+from fastapi import FastAPI
+from utils import create_app
+
+app = create_app()  
+
+@app.get("/")
+async def root():
+    return {"message": "Hello, World!"}
 
 if __name__ == "__main__":
     import uvicorn
