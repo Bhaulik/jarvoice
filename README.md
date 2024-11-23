@@ -66,7 +66,8 @@ The API will be available at `http://localhost:8000`
 
 Once running, visit:  
 - Swagger UI: `http://localhost:8000/docs`  
-- ReDoc: `http://localhost:8000/redoc`  
+- ReDoc: `http://localhost:8000/redoc`
+
 
 ### Core Endpoints
 
@@ -92,7 +93,63 @@ jarvoice-api/
 
 ## 🔧 Development
 
-### Adding New Features
+# Vapi Documentation Summary
+
+## Adding Tools
+
+Tools in Vapi are implemented through server URLs and function calls, enabling your assistant to interact with external services.
+
+### Server URLs
+
+Server URLs allow real-time communication between Vapi and your application. They enable you to:
+
+- Receive conversation events (status updates, transcripts, function calls)
+- Get dynamic assistant configurations
+- Receive end-of-call reports
+
+**To set up a server URL:**
+1. Configure the URL in your assistant settings.
+2. Implement an endpoint on your server to handle POST requests from Vapi.
+3. Process the received data and respond as needed.
+
+### Function Calls
+
+Function calls allow your assistant to trigger specific actions during a conversation. You can define custom functions that your assistant can invoke, such as:
+
+- Forwarding calls
+- Hanging up
+- Accessing external databases or APIs
+
+## Key Configurations
+
+### Ngrok for Local Development
+
+For testing server URLs in a local development environment, you can use ngrok:
+
+1. Install ngrok.
+2. Run your local server.
+3. Use ngrok to create a public URL for your local server.
+4. Set the ngrok URL as your server URL in Vapi.
+
+### Custom LLM URL
+
+You can plug in your own Language Model by configuring a custom LLM URL, allowing you to use specialized or proprietary models for your assistant.
+
+### Provider Keys
+
+To integrate with external services (e.g., specific TTS, LLM, or STT vendors), add your API keys in the Vapi dashboard.
+
+### Assistant Configuration
+
+Assistants can be customized with various components:
+
+- **Transcriber**: For speech-to-text conversion
+- **Model**: The language model powering the assistant's responses
+- **Voice**: The text-to-speech voice for the assistant
+
+By leveraging these tools and configurations, you can create highly customized and powerful voice AI assistants using Vapi.
+
+### Adding New Features to Backend after the above Vapi Voice api Configurations
 
 1. Define new models in `base_models.py`  
 2. Implement business logic in appropriate modules  
