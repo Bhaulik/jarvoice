@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends
 from pathlib import Path
 from dotenv import load_dotenv
 from uuid import UUID
-from base_models import Task, Reminder, ReminderCreate, TaskBase, TaskCreate, User, UserCreate, ContactBase, ContactCreate, Contact
+from base_models import Task, Reminder, ReminderCreate, TaskBase, TaskCreate, User, UserCreate, ContactBase, ContactCreate, Contact, Event, EventCreate  # Remove EventCreate
 import os
 from langchain_core.messages import AIMessage
 
@@ -637,6 +637,45 @@ async def get_research_results(
     search: Optional[str] = None
 ):
     return await fetch_research_results(supabase, page, page_size, search)
+
+@app.post("/events", response_model=Event)
+async def create_event(
+    event: EventCreate,
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        event_dict = {
+            **event.model_dump(),
+            "created_at": datetime.now(pytz.UTC).isoformat(),
+            "updated_at": datetime.now(pytz.UTC).isoformat(),
+        }
+        
+        # Convert UUID to string
+        event_dict['user_id'] = str(event_dict['user_id'])
+        
+        response = supabase.table("events").insert(event_dict).execute()
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Failed to create event")
+            
+        created_event = Event(**response.data[0])
+        
+        # Schedule reminders if specified
+        if event.reminder_times:
+            for minutes in event.reminder_times:
+                reminder_time = event.start_time - timedelta(minutes=minutes)
+                scheduler.schedule_one_time_job(
+                    func=send_sms,
+                    run_at=reminder_time,
+                    job_id=f"event_reminder_{created_event.id}_{minutes}",
+                    to_number=event.attendees[0].phone_number,  # Primary attendee
+                    message=f"🎂 Reminder: {event.title} starts in {minutes} minutes!",
+                    metadata={"event_id": str(created_event.id)}
+                )
+        
+        return created_event
+    except Exception as e:
+        logger.error(f"Failed to create event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     api_token = os.getenv("VAPI_TOKEN")
