@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 import pytz
 from enum import Enum
+import json
 
 class UserBase(BaseModel):
     phone_number: str
@@ -35,8 +36,41 @@ class Event(BaseModel):
     description: Optional[str] = None
     start_time: datetime
     end_time: datetime
+    location: Optional[str] = None
+    reminder_time: Optional[datetime] = None
+    attendees: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    status: Optional[str] = None
+    reminder_sent: Optional[bool] = None
+    recurrence_rule: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class EventCreate(BaseModel):
+    title: str
+    start_time: datetime
+    end_time: datetime
+    user_id: UUID4
+    description: Optional[str] = None
+    location: Optional[str] = None
+    reminder_time: Optional[datetime] = None
+    attendees: Optional[str] = None
+
+    def model_dump(self, **kwargs):
+        data = super().model_dump(**kwargs)
+        # Convert all datetime fields to ISO format strings
+        for field in ['start_time', 'end_time', 'reminder_time']:
+            if data.get(field):
+                data[field] = data[field].isoformat()
+        # Convert UUID to string
+        if data.get('user_id'):
+            data['user_id'] = str(data['user_id'])
+        # Convert attendees list to JSON string if present
+        if data.get('attendees'):
+            data['attendees'] = json.dumps(data['attendees'])
+        return data
 
     class Config:
         from_attributes = True
