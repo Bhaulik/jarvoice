@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends
 from pathlib import Path
 from dotenv import load_dotenv
 from uuid import UUID
-
+from base_models import Task, Reminder, ReminderCreate, TaskBase, TaskCreate, User, UserCreate
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from tool_functions import * 
@@ -59,133 +59,181 @@ async def root():
         "status": "active"
     }
 
-# Pydantic models
-class Event(BaseModel):
-    id: UUID4
-    title: str
-    description: Optional[str] = None
-    start_time: datetime
-    end_time: datetime
-    attendees: List[str]
-    status: str
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class EventResponse(BaseModel):
-    data: List[Event]
-    count: int
-    page: int
-    page_size: int
-
-# Get the absolute path to your .env file
-env_path = Path('.') / '.env'
-load_dotenv(dotenv_path=env_path.resolve())
-
 # Supabase client initialization
 def get_supabase() -> Client:
     url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
+    key = os.environ.get("SUPABASE_ANON_KEY")
     if not url or not key:
         raise HTTPException(status_code=500, detail="Supabase credentials not configured")
     return create_client(url, key)
 
-@app.get("/events", response_model=EventResponse)
-async def get_events(
-    supabase: Client = Depends(get_supabase),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
-    status: Optional[str] = Query(None, regex="^(SCHEDULED|CANCELED|COMPLETED)$"),
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    search: Optional[str] = None
+# Add new endpoints after your existing endpoints
+@app.post("/users", response_model=User)
+async def create_user(
+    user: UserCreate,
+    supabase: Client = Depends(get_supabase)
 ):
     try:
-        query = supabase.table("events").select("*", count="exact")
-        print(query)
-        # Apply filters
+        response = supabase.table("users").insert(user.model_dump()).execute()
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Failed to create user")
+        return User(**response.data[0])
+    except Exception as e:
+        logger.error(f"Failed to create user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/users/{user_id}", response_model=User)
+async def get_user(
+    user_id: UUID4,
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        response = supabase.table("users").select("*").eq("id", str(user_id)).execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        return User(**response.data[0])
+    except Exception as e:
+        logger.error(f"Failed to get user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tasks", response_model=Task)
+async def create_task(
+    task: TaskCreate,
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        # Convert the model to a dict with datetime values as ISO format strings
+        task_dict = {
+            **task.model_dump(exclude_none=True),
+            "created_at": datetime.now(pytz.UTC).isoformat(),
+            "updated_at": datetime.now(pytz.UTC).isoformat(),
+            "reminder_sent": False  # Add default value for reminder_sent
+        }
+
+        # Ensure datetime fields are converted to ISO format
+        if task_dict.get('due_date'):
+            task_dict['due_date'] = task_dict['due_date'].isoformat()
+        if task_dict.get('reminder_time'):
+            task_dict['reminder_time'] = task_dict['reminder_time'].isoformat()
+        
+        # Convert UUID to string
+        task_dict['user_id'] = str(task_dict['user_id'])
+        
+        # Create task
+        response = supabase.table("tasks").insert(task_dict).execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Failed to create task")
+        
+        created_task = Task(**response.data[0])
+
+        # Schedule reminder if specified
+        if task.reminder_time:
+            try:
+                # Get user's phone number
+                user_response = supabase.table("users")\
+                    .select("phone_number")\
+                    .eq("id", str(task.user_id))\
+                    .single()\
+                    .execute()
+                
+                if user_response.data:
+                    user_phone = user_response.data['phone_number']
+                    
+                    # Schedule the reminder
+                    scheduler.schedule_one_time_job(
+                        func=caller.make_simple_call,
+                        run_at=task.reminder_time,
+                        job_id=f"task_reminder_{created_task.id}",
+                        to_number=user_phone,
+                        message=f"Reminder: Your task '{created_task.title}' is due at {created_task.due_date.strftime('%I:%M %p')}",
+                        metadata={
+                            "task_id": str(created_task.id),
+                            "user_id": str(task.user_id),
+                            "reminder_type": "SMS"
+                        }
+                    )
+            except Exception as e:
+                logger.error(f"Failed to schedule reminder: {e}")
+                # Don't fail the task creation if reminder scheduling fails
+                
+        return created_task
+
+    except Exception as e:
+        logger.error(f"Failed to create task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tasks", response_model=List[Task])
+async def get_tasks(
+    supabase: Client = Depends(get_supabase),
+    user_id: UUID4 = Query(...),
+    status: Optional[str] = Query(None, regex="^(PENDING|IN_PROGRESS|COMPLETED|CANCELED)$"),
+    due_after: Optional[datetime] = None,
+    due_before: Optional[datetime] = None
+):
+    try:
+        query = supabase.table("tasks").select("*").eq("user_id", str(user_id))
+        
         if status:
             query = query.eq("status", status)
-        if start_date:
-            query = query.gte("start_time", start_date.isoformat())
-        if end_date:
-            query = query.lte("end_time", end_date.isoformat())
-        if search:
-            query = query.or_(f"title.ilike.%{search}%,description.ilike.%{search}%")
-
-        # Calculate pagination
-        offset = (page - 1) * page_size
-        response = query.range(offset, offset + page_size - 1).execute()
-
-        if not response.data:
-            return EventResponse(
-                data=[],
-                count=0,
-                page=page,
-                page_size=page_size
-            )
-
-        # Transform the data to ensure proper typing
-        events = []
-        for event_data in response.data:
-            # Ensure UUID fields are properly formatted
-            event_data['id'] = UUID4(event_data['id'])
+        if due_after:
+            query = query.gte("due_date", due_after.isoformat())
+        if due_before:
+            query = query.lte("due_date", due_before.isoformat())
             
-            # Ensure datetime fields are properly parsed
-            event_data['start_time'] = datetime.fromisoformat(event_data['start_time'])
-            event_data['end_time'] = datetime.fromisoformat(event_data['end_time'])
-            event_data['created_at'] = datetime.fromisoformat(event_data['created_at'])
-            event_data['updated_at'] = datetime.fromisoformat(event_data['updated_at'])
-            
-            # Ensure attendees is a list
-            if 'attendees' not in event_data or event_data['attendees'] is None:
-                event_data['attendees'] = []
-                
-            # Ensure status is a string
-            if event_data['status'] is None:
-                event_data['status'] = 'SCHEDULED'
-
-            events.append(Event(**event_data))
-
-        return EventResponse(
-            data=events,
-            count=response.count,
-            page=page,
-            page_size=page_size
-        )
+        response = query.execute()
+        return [Task(**task_data) for task_data in response.data]
 
     except Exception as e:
-        print(e)
+        logger.error(f"Failed to fetch tasks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    
-@app.get("/events/{id}", response_model=Event)
-async def get_event(
-    id: UUID4,
-    supabase: Client = Depends(get_supabase)
-) -> Event:
-    try:
-        response = supabase.table("events").select("*").eq("id", str(id)).execute()
-        
-        if not response.data or len(response.data) == 0:
-            raise HTTPException(status_code=404, detail="Event not found")
 
-        event_data = response.data[0]
-        return Event(
-            id=UUID4(event_data['id']),
-            title=event_data['title'],
-            description=event_data['description'],
-            start_time=datetime.fromisoformat(event_data['start_time']),
-            end_time=datetime.fromisoformat(event_data['end_time']),
-            attendees=event_data.get('attendees', []),
-            status=event_data.get('status') or 'SCHEDULED',  # Default to 'SCHEDULED' if None
-            created_at=datetime.fromisoformat(event_data['created_at']),
-            updated_at=datetime.fromisoformat(event_data['updated_at'])
-        )
+@app.patch("/tasks/{task_id}", response_model=Task)
+async def update_task(
+    task_id: UUID4,
+    task_update: TaskBase,
+    supabase: Client = Depends(get_supabase)
+):
+    try:
+        # If reminder time is updated, reschedule the reminder
+        if task_update.reminder_time:
+            # Cancel existing reminder job if any
+            scheduler.cancel_job(f"task_reminder_{task_id}")
+            
+            # Get user info for new reminder
+            task_response = supabase.table("tasks").select("user_id").eq("id", str(task_id)).execute()
+            if task_response.data:
+                user_id = task_response.data[0]['user_id']
+                user_response = supabase.table("users").select("phone_number").eq("id", user_id).execute()
+                if user_response.data:
+                    user_phone = user_response.data[0]['phone_number']
+                    
+                    # Schedule new reminder
+                    scheduler.schedule_one_time_job(
+                        func=caller.make_simple_call,
+                        run_at=task_update.reminder_time,
+                        job_id=f"task_reminder_{task_id}",
+                        to_number=user_phone,
+                        message=f"Reminder: Your task '{task_update.title}' is due soon",
+                        metadata={
+                            "task_id": str(task_id),
+                            "user_id": user_id,
+                            "reminder_type": "SMS"
+                        }
+                    )
+
+        # Update task
+        response = supabase.table("tasks").update(
+            task_update.model_dump(exclude_unset=True)
+        ).eq("id", str(task_id)).execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Task not found")
+            
+        return Task(**response.data[0])
 
     except Exception as e:
-        print(e)
+        logger.error(f"Failed to update task: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     
 
