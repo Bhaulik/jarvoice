@@ -2,7 +2,9 @@ from typing import Dict, Any, Callable
 from rich.console import Console
 from rich.table import Table
 from loguru import logger
+from typing import Dict, Any, Optional, ForwardRef, List, Callable
 from functools import wraps
+from pydantic import BaseModel, field_validator
 
 console = Console()
 
@@ -20,17 +22,44 @@ class ArgumentType(str, Enum):
 class ToolArgumentSpec(BaseModel):
     type: ArgumentType
     description: str
-    required: bool = True
-    default: Optional[Any] = None
+    required: bool = False
+    items: Optional[Dict] = None  # Keep the full items structure
+    properties: Optional[Dict] = None
+    enum: Optional[List[str]] = None
+    pattern: Optional[str] = None
+    minimum: Optional[int] = None
+
+    def dict(self, *args, **kwargs):
+        d = super().dict(*args, **kwargs)
+        # Remove None values
+        return {k: v for k, v in d.items() if v is not None}
+
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
 
 class ToolFunctionMetadata(BaseModel):
     name: str
     description: str
     arguments: Dict[str, ToolArgumentSpec]
 
+    @field_validator('description')
+    def validate_description(cls, v):
+        if not isinstance(v, str):
+            raise ValueError('Description must be a string')
+        return v
+
 class ToolCallFunction(BaseModel):
     name: str
     arguments: Dict[str, Any]
+    _return_value: Optional[str] = None  # Private field to store return value
+
+    def validate_return_value(self, value: Any) -> str:
+        """Validate that the function return value is a string"""
+        if not isinstance(value, str):
+            raise ValueError(f'Tool function must return a string, got {type(value)}')
+        self._return_value = value
+        return value
 
     class Config:
         extra = "allow"
