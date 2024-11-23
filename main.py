@@ -1,7 +1,7 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta, time
 from pydantic import UUID4, BaseModel
 from supabase import create_client, Client
 from fastapi import FastAPI, HTTPException, Query, Depends
@@ -27,12 +27,16 @@ from tool_registry import ArgumentType
 import os
 from vapi import Vapi
 from typing import List, Dict, Any, Callable, TypeVar, Optional, Union, Type
+from scheduler import schedule_event_reminder, cancel_event_reminder, shutdown_scheduler, SupabaseJobScheduler, TriggerType
+import asyncio
+import pytz
 
 app = FastAPI(
     title="Jarvoice API",
     description="Personal AI Assistant API that can manage tasks through phone calls & texts",
     version="1.0.0"
 )
+scheduler = SupabaseJobScheduler()
 
 # Configure CORS
 app.add_middleware(
@@ -320,10 +324,68 @@ async def extract_tool_calls(request: Request):
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="An error occurred while processing the request.")
 
+# Modify the test function to properly use async/await
+async def print_hello_world(**kwargs):
+    """
+    Async test function that prints Hello World and the current time
+    """
+    print('the weather is RAINY!!!')
+    return "Hello World job completed successfully!!!!!!"
+
+@app.post("/test/schedule-hello")
+async def schedule_hello_world():
+    try:
+        # Schedule for 30 seconds from now
+        run_time = datetime.now(pytz.UTC) + timedelta(seconds=20)
+        
+        metadata = {
+            "test_data": "This is a test job",
+            "scheduled_for": run_time.isoformat()
+        }
+        
+        job = scheduler.schedule_one_time_job(
+            func=print_hello_world,  # Using the async function
+            run_at=run_time,
+            job_id=f"hello_world_{datetime.now().timestamp()}",
+            **metadata
+        )
+        
+        return {
+            "message": "Hello World job scheduled successfully",
+            "scheduled_time": run_time.isoformat(),
+            "job_id": job.job_id
+        }
+    except Exception as e:
+        logger.error(f"Failed to schedule Hello World job: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/jobs/{job_id}")
+async def get_job_status(job_id: str):
+    """Check the status of a scheduled job"""
+    job = scheduler.get_job(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job {job_id} not found"
+        )
+    
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "scheduled_for": job.run_date,
+        "metadata": job.metadata
+    }
 
 if __name__ == "__main__":
     api_token = os.getenv("VAPI_TOKEN")
     if not api_token:
         logger.error("VAPI_TOKEN environment variable not set")
+        sys.exit(1)
+    
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_ANON_KEY")
+    if not supabase_url or not supabase_key:
+        logger.error("SUPABASE_URL or SUPABASE_ANON_KEY environment variable not set")
         sys.exit(1)
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
